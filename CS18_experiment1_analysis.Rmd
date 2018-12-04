@@ -1,0 +1,506 @@
+---
+title: "CS18_experiment1_analysis"
+author: "Jeanne"
+date: "December 2, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen = 1, digits = 2)
+
+require(ggplot2)
+require(plyr)
+require(dplyr)
+require(reshape2)
+require(lme4)
+require(lmerTest)
+
+```
+
+#Experiment 1: Learning task   
+
+In this task, participants saw two pictures on the screen and heard one word. Their task was to indicate which picture the word matched with using a button pad. THey would get feedback on their answer (the correct picture staid on the screen while the incorrect one disappeared, sometimes replaced by the word's spelling).  
+
+
+
+```{r}
+##reading the learning task data
+exp1_training <- read.csv("Experiment1_training_masterFile.csv", header=T)
+
+##excluding subjects who performed poorly (on training and/or on the picture matching task. Bases for exclusion described below and in paper)
+
+exp1_training.sub<-exp1_training[!exp1_training$ID %in% c("CN01","CN02","CN05","CN10","CN19","CN21","CN26","CN28","CN29",
+                                         "VN06","VN08","VN23",
+                                         "CV02","CV04","CV10","CV12","CV14","CV21","CV22"),]
+
+#length(exp1_training.sub$RT) = 38400
+
+##eliminating trials that were too fast (i.e. <250 ms)
+exp1_training.sub250 <- exp1_training.sub[exp1_training.sub$RT>250,]
+
+#length(exp1_training.sub250$RT) = 37438
+## --> eliminating trials faster than 250ms resulted in excuding about 2.5% of the data
+
+```
+
+The paradigm used for the learning task is similar to the one used in Leach & Samuel 2007 and Samuel & Larraza 2015. Like in these two papers, subjects learned the word-picture pairs after about 10 repetitions.  
+The repetition variable corresponds to number of time a particular picture-word pair was presented.Each was presented a total of 20 times.  
+
+####Means:
+```{r}
+exp1_training.mean <- aggregate(accuracy ~ block+repetition, exp1_training.sub250, FUN="mean")
+exp1_training.mean
+```
+
+####Plot:  
+```{r, echo=FALSE}
+
+ggplot(exp1_training.mean, aes(x=repetition, y=accuracy))+
+  geom_point(aes(color=block),size=4)+
+  geom_line(size = 1)+
+  labs(color="Block\n", title = "LEARNING TASK")+
+  ylab("Mean Percent Correct")+
+  xlab("Number of Training Repetitions")
+
+```
+
+By the end of the learning task, subjects were at ceiling.   
+
+
+
+
+# Experiment 1: Picture Matching task   
+
+```{r}
+##reading Picture matching task data
+exp1_data<-read.csv("Experiment1_masterFile.csv", header=T)
+str(exp1_data)
+
+```
+
+Numbers of subjects per groups  
+Our plan was to collect data from 20 subjects per groups. Due to some subjects' poor performance on the controls trials, we had to run additional subjects in all the groups.  
+
+```{r, echo=FALSE}
+numSubjects<-ddply(exp1_data, ~ group, summarise, Subjects = length(unique(ID)))
+numSubjects
+
+```
+
+
+Our bases for exclusion were: 
+
+    1) performance below two standard deviations from the group mean during the last block of the learning phase and/or  
+    2) performance below two standard deviations from the group mean on the familiar words trials during the picture matching task.   
+  
+  In addition, one subject was excluded because of experimenter error
+
+
+Excluded subjects were:  
+
+    In the Canonical_None group: CN01, CN02, CN05, CN10, CN19, CN21, CN26, CN28, CN29  
+    In the Reduced_None group: VN06, VN08, VN23    
+    In the Canonical_Reduced group: CV02, CV04, CV10, CV12, CV14, CV21, CV22  
+    
+```{r, echo=FALSE}
+exp1_data.sub<-exp1_data[!exp1_data$ID %in% c("CN01","CN02","CN05","CN10","CN19","CN21","CN26","CN28","CN29",
+                                         "VN06","VN08","VN23",
+                                         "CV02","CV04","CV10","CV12","CV14","CV21","CV22"),]
+
+numSubject.update<-ddply(exp1_data.sub, .(group), summarise, Subjects = length(unique(ID)))
+numSubject.update
+```
+
+Additionally, we excluded data from trials where subjects answered in less than 250ms.  
+
+```{r, echo=FALSE}
+exp1_data.sub250<-exp1_data.sub[exp1_data.sub$RT >250,]##keeping only  RTs superior to 250ms
+summary(exp1_data.sub250$RT)
+```
+
+
+
+During the Picture Matching task, subjects saw a picture on the computer screen and heard a word through the headphones. Their task was to indicate whether the picture and the word matched by pressing 'yes' or 'no' on a button pad.  
+
+There were 4 types of trials in a sense:  
+    1)control trial type 1: a newly learned object is presented with its newly learned pronunciation (i.e. the reduced pronunciation). For example the picture of a "bytto" with spoken word "byddo"    
+    2)control trial type 2: a familiar object is presented with its correct English pronunciation. For example the picture of a basketball with spoken word "basketball"  
+    3)control trial type 3: a familiar object is presented with a nonword. For example the picture of basketball with spoken word "bashketball"  
+    4)critical trial: a newly learned object is presented with its canonical pronunciation (heard for the 1st time). FOr example the picture of a "bytto" with word "bytto"   
+    
+    
+Here are the corresponding data subsets: 
+```{r}
+
+## subset of canonical pronunciation 
+exp1_canonical <- exp1_data.sub250[exp1_data.sub250$pronunciation == "New words, canonical pronunciation",]
+
+##subset of variant pronunciationo
+ exp1_variant <-exp1_data.sub250[exp1_data.sub250$pronunciation == "New words, trained pronunciation",]
+ 
+ ##subset of familiar words
+ exp1_familiar <-exp1_data.sub250[exp1_data.sub250$pronunciation == "Familiar words",]
+
+ ##subset of mispronounced words
+ exp1_nonwords <- exp1_data.sub250[exp1_data.sub250$pronunciation == "Nonwords",]
+
+
+```
+
+
+##ACCURACY ANALYSIS: CONTROL TRIALS   
+
+Data frame with control trials only
+```{r, echo=FALSE}
+exp1_controlTrials<-rbind(exp1_variant, exp1_familiar, exp1_nonwords)
+#exp1_controlTrials
+```
+
+###Accuracy by group for each type of control items.  
+
+####Means:  
+```{r, echo=FALSE}
+control_means <- aggregate(correct ~ pronunciation+group, exp1_controlTrials, FUN="mean")
+
+```
+
+We can also look at whether spelling.learned learned seemed to impact accuracy for the "newly learned words" control trials:
+```{r}
+##looking specifically at newly learned words and if orthography had an impact on these
+newlyL_means<-aggregate(correct ~ pronunciation+group+spelling.learned, exp1_variant, FUN="mean")
+newlyL_means
+
+```
+
+####Plot:   
+```{r}
+##Calculating standard deviation and standard error to the mean:
+control_sd <- aggregate(correct~pronunciation+group, exp1_controlTrials, FUN="sd")
+control_sd$sem<- control_sd$correct/sqrt(20) #there are 20 subjects in each group
+control_means$sd<-control_sd$correct
+control_means$sem<-control_sd$sem
+
+
+##multiply by 100 to get on a more readable % scale
+control_means$correct<-control_means$correct*100
+control_means$sd<-control_means$sd*100
+control_means$sem<-control_means$sem*100
+
+##if mean + sem>100, make it 100: 
+control_means$ymin <- control_means$correct - control_means$sem
+control_means$ymax <- control_means$correct + control_means$sem
+control_means$ymax[control_means$ymax > 100]<-100
+
+##Code for the plot:
+
+control.plot<-ggplot(control_means, aes(x=group, y=correct))+
+  geom_bar(stat="identity", position="dodge", aes(fill=pronunciation), color="black")+
+  geom_errorbar(aes(ymin=ymin, ymax=ymax, shape=pronunciation), width=.2,size=1, position=position_dodge(.9))+
+  theme(axis.text.x=element_text(angle=45,hjust = 1))+
+  ylab("Mean percent correct")+
+  xlab("Group")+
+  labs(title= "PICTURE MATCHING TASK\nControl items ",fill="Items")
+control.plot
+
+```
+
+
+Results on control trials were consistent with our intuitions: high accuracy on all of them. Nonwords trials appeared a little harder than the others, but the stimuli was built such that the mispronunciation would be subtle (only one phoneme differed from the original word, e.g. "abron" for "apron") and required the subjects' full attention.  
+
+##ACCURACY ANALYSIS: CRITICAL TRIALS.   
+
+The critical trials are trials where the canonical pronunciation was presented.   
+(These trials are subsetted in "exp1_canonical")  
+
+What type of data do we have here?  
+- each subject has 32 trials of critical words, some they learned with a spelling (canonical or variant)  
+- in other words the measure is repeated within subjects  
+- 2/3 of subjects were exposed to no ortho for some words  
+- 2/3 to canon ortho  
+- 2/3 to variant ortho  
+
+###Main effect of spelling?       
+
+Mean accuracy for the critical items for each spelling learned  
+
+####Mean   
+```{r}
+main_spelling.learned<-aggregate(correct~spelling.learned, exp1_canonical, FUN="mean")
+main_spelling.learned
+
+```
+
+
+####Plot:   
+```{r, echo=FALSE}
+
+main_spelling.learned_sd <- aggregate(correct~spelling.learned, exp1_canonical, FUN="sd")
+
+main_spelling.learned_ID <-aggregate(correct~spelling.learned+ID, exp1_canonical, FUN="mean")
+
+main_spelling.learned_sd$sem<- main_spelling.learned_sd$correct/sqrt(40) ##N=40 for each spelling.learned type
+main_spelling.learned$sd<-main_spelling.learned_sd$correct
+main_spelling.learned$sem<-main_spelling.learned_sd$sem
+
+
+##multiply by 100 to make it %
+main_spelling.learned$correct_per<-main_spelling.learned$correct*100
+main_spelling.learned$sd_per<-main_spelling.learned$sd*100
+main_spelling.learned$sem_per<-main_spelling.learned$sem*100
+
+
+
+spell.plot<-ggplot(main_spelling.learned, aes(x=spelling.learned, y=correct_per))+
+    geom_bar(stat="identity", position="dodge" ,aes(fill=spelling.learned), color="black")+
+    geom_errorbar(aes(ymin=correct_per-sem_per, ymax=correct_per+sem_per), width=.2,size=1, position=position_dodge(.9))+
+    geom_count(data=main_spelling.learned_ID, aes(x=spelling.learned, y=correct*100), alpha=.8)+
+    ylab("Accuracy")+ylim(0,100)+
+    xlab("Spelling learned")+
+    labs(title="PICTURE-WORD MATCHING\n")+
+    guides(fill=FALSE)
+
+spell.plot
+```
+
+####Analysis for the main effect of Spelling   
+
+Model with spelling.learned as a fixed factor   
+```{r}
+
+spell.mod1<-glmer(correct~spelling.learned+(1|ID)+(1|item), data=exp1_canonical, family="binomial")
+summary(spell.mod1)
+```
+
+Model without fixed factor   
+```{r}
+##base model
+spell.mod0<-glmer(correct~(1|ID)+(1|item), data=exp1_canonical, family="binomial")
+summary(spell.mod0)
+```
+
+Comparing the two   
+```{r}
+##Likelihood test
+anova(spell.mod0,spell.mod1)
+
+```
+
+Relevel the first model (i.e. change reference level) to get all the comparisons:  
+```{r}
+##relevel to get all the comparisons between spellings:
+spell_relevel<-within(exp1_canonical, spelling.learned <- relevel(spelling.learned, ref = 3))
+
+spell.mod1_rlvl<-glmer(correct~spelling.learned+(1|ID)+(1|item), data=spell_relevel, family="binomial")
+summary(spell.mod1_rlvl)
+```
+
+###Direct test of hypothesis: accuracy by spelling.learned within the Canonical_Reduced group  
+
+This is a direct test of our hypothesis since participants in this group leanred half the words with a canonical spelling and half with a reduced spelling.  
+A difference in accuracy based on spelling learned would indicate an effect of orthography on the perception of canonical pronunciations of words.  
+
+```{r, echo=FALSE}
+
+##Subset with only Canonical_Reduced group
+
+CR_criticalTrials<-exp1_canonical[exp1_canonical$group=="Canonical_Reduced",]
+#str(CR_criticalTrials)
+
+```
+
+
+####Means:  
+```{r, echo=FALSE}
+CR.means <-aggregate(correct~spelling.learned, CR_criticalTrials, FUN="mean")
+CR.means
+```
+
+####Plot:  
+```{r, echo=FALSE}
+
+CR.bySubject <- aggregate(correct~ID+spelling.learned,CR_criticalTrials, FUN="mean")
+
+
+ggplot(CR.means, aes(spelling.learned, correct))+
+  geom_bar(stat="identity", position="dodge", aes(fill=spelling.learned))+
+  geom_line(data=CR.bySubject, aes(group=ID, x=spelling.learned, y=correct))
+
+
+
+```
+
+####Analysis of the effect of spelling within the Canonical_Reduced group.    
+
+Model with spelling.learned as a fixed factor:  
+```{r, echo=FALSE}
+ 
+CR.mod1 <-glmer(correct ~ spelling.learned + (1|ID) + (1|item), CR_criticalTrials, family="binomial")
+summary(CR.mod1)
+```
+
+Model without fixed factor:  
+```{r}
+
+CR.mod0<-glmer(correct ~ (1|ID) + (1|item), CR_criticalTrials, family = "binomial")
+```
+
+Comparing the two:  
+```{r}
+
+anova(CR.mod1, CR.mod0)
+```
+
+###Generalization?   
+###Mean accuracy on the no spelling items in the Canonical_none and Reduced_none groups   
+
+Here we are testing whether the items that were not learned with any accompanying spelling inherited the properties of the items learned with a spelling. In other words we're looking whether there were generalization.  
+
+####Means:
+```{r}
+#subset of the "no spelling" trias in group Canonical_none and Reduced_None
+CNRN_criticalTrials <-exp1_canonical[exp1_canonical$group %in% c("Canonical_None", "Reduced_None"),]
+CNRN_noSpellingTrials <- CNRN_criticalTrials[CNRN_criticalTrials$spelling.learned %in% c("none"),]
+#summary(CNRN_noSpellingTrials)
+
+#means
+CNRN_none.means <- aggregate(correct ~ group, CNRN_noSpellingTrials, FUN="mean")
+CNRN_none.means
+```
+
+
+####Plot:  
+```{r, echo=FALSE}
+
+##by subjects means
+CNRN_none.bySubject <-aggregate(correct ~ group + ID, CNRN_noSpellingTrials, FUN="mean")
+
+ggplot(CNRN_none.means, aes(group, correct))+
+  geom_bar(stat="identity", position="dodge", aes(fill=group))+
+  geom_count(data=CNRN_none.bySubject, aes(group, correct))
+
+
+```
+
+####Analysis of difference on the no spelling items between Canonical_None and Reduced_None groups.     
+
+Model with group as a fixed factor:   
+```{r, echo=FALSE}
+
+CNRN_none.mod1 <- glmer(correct ~group + (1|ID)+(1|item), CNRN_noSpellingTrials, family="binomial" )
+summary(CNRN_none.mod1)
+
+```
+
+Model without the fixed factor:  
+```{r}
+
+CNRN_none.mod0<-glmer(correct ~ (1|ID) + (1|item), CNRN_noSpellingTrials, family="binomial")
+summary(CNRN_none.mod0)
+```
+
+Comparing the two:   
+```{r}
+
+anova(CNRN_none.mod1, CNRN_none.mod0)
+```
+
+###Interaction between learning context and accuracy?
+
+Comparing the difference between the Canonical_None canonical spelling trials performance and Reduced_None reduced spelling trials performance to the difference between the Canonical_Reduced canonical spelling trials and reduced spelling trials.  
+
+To be able to do this analysis I created a new variable called "learning condition".   
+This variable has two levels: consistent or inconsistent.   
+In Group 1 and 2, I call the learning "consistent" because the rules listeners had to learn were simple:   
+- **Group 1: when a word has a spelling**  
+  -intervocalic flap is always spelled "tt" (bytto)     
+  -nasal flap is always spelled "nt" (sento)    
+- **Group 2: when a word has a spelling**     
+  -intervocalic flap is always spelled "dd" (cluddee)     
+  -nasal flap is always spelled "nn" (trenner)      
+              
+In **Group 3** I call the learning "inconsistent" because the rules were more complicated:    
+  - intervocalic flap is spelled "tt" or "dd"  
+  - nasal flap is spelled "nt" or "nt" 
+  
+  
+```{r, echo=FALSE}
+
+##creating the "learning" variable, which hasa two levels: "simple" or "complex".  
+##A simple learning context is one where subjects only learned one type of spelling for the words, i.e. the Canonical_None and Reduced_None groups subjects. In these groups when a word did receive a spelling it was always of one type, either "canonical" (e.g. tt or nt) oe "reduced" (e.g. dd or nn). 
+##A complex learning context is one where subjects learned some of the words with a canonical spelling and some with a reduced spelling i.e. the Canonical_Reduced group subjects. 
+
+exp1_interaction<-exp1_canonical
+
+##keeping only trials of wordss learned with a spelling
+exp1_interaction<-exp1_interaction[exp1_interaction$spelling.learned %in% c("canonical", "reduced"),]
+exp1_interaction$spelling.learned <- factor(exp1_interaction$spelling.learned)
+
+##creating the learning variable: 
+exp1_interaction$learning<-exp1_interaction$group
+exp1_interaction$learning<-revalue(exp1_interaction$learning, c("Canonical_None"="simple",
+                                     "Reduced_None"="simple",
+                                     "Canonical_Reduced" = "complex"))
+
+
+```
+
+####Means:  
+```{r, echo=FALSE}
+
+learn<-aggregate(correct~learning+spelling.learned, exp1_interaction, FUN="mean")
+learn_sd <- aggregate(correct~learning+spelling.learned, exp1_interaction, FUN="sd")
+
+
+learn_sd$sem<- learn_sd$correct/sqrt(20)
+learn$sd<-learn_sd$correct
+learn$sem<-learn_sd$sem
+
+learn
+```
+
+####Plot   
+```{r, echo=FALSE}
+
+learn.id<-aggregate(correct~learning+spelling.learned+ID, exp1_interaction, FUN="mean")
+
+
+ggplot(learn, aes(x=learning, y=correct))+
+    geom_bar(stat="identity", position="dodge" ,aes(fill=spelling.learned))+
+    geom_errorbar(aes(ymin=correct-sem, ymax=correct+sem, shape=spelling.learned), 
+                  width=.2,size=1, position=position_dodge(.9))+
+    geom_point(data=learn.id,aes(x=learning,y=correct, shape=spelling.learned),
+               position =position_jitterdodge(jitter.width =0.2,jitter.height = 0,dodge.width = .9), 
+               alpha=.3, size=1.5, show.legend = FALSE)+
+    theme(plot.margin = unit(c(1,3,1,1),"lines"),
+              text =element_text(size=14),legend.text=element_text(size=14),
+              axis.text=element_text(size=14),
+              axis.title=element_text(size=14,face="bold"),plot.title = element_text(hjust = 0.5) )+
+    ylab("mean proportion correct")+xlab("grapheme-phoneme mapping")+scale_y_continuous(breaks=seq(0,1.10,0.1))
+```
+
+####Analyses:  
+
+Model with interaction: 
+```{r}
+
+learning.mod1 <- glmer(correct ~ learning/spelling.learned + (1|ID)+
+                         (1|item),exp1_interaction, family="binomial")
+
+summary(learning.mod1)
+```
+
+Model without interaction:  
+```{r}
+
+learning.mod0 <-glmer(correct~learning+spelling.learned+(1|ID)+(1|item), data=exp1_interaction, family="binomial")
+summary(learning.mod0)
+
+```
+
+Comparing the two:  
+```{r}
+
+anova(learning.mod0, learning.mod1)
+```
+
